@@ -17,3 +17,5 @@ es
 dist
 .vscode
 **/*.tsbuildinfo
+# Rust build outputs
+packages/swc/target/
