@@ -5,6 +5,8 @@ use swc_ecma_parser::{lexer::Lexer, Parser, StringInput, Syntax, TsConfig};
 use swc_ecma_visit::{Visit, VisitWith};
 use wasm_bindgen::prelude::*;
 
+const VIRTUAL_LOC_PROPS: &str = "-1";
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ObservedMeta {
@@ -91,12 +93,14 @@ fn is_first_cap(name: &str) -> bool {
     name.chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false)
 }
 
-fn has_component_comment(comments: &SingleThreadedComments, span: Span) -> bool {
-    if let Some(items) = comments.get_leading(span.lo()) {
-        items.iter().any(|c| c.text.contains("@component"))
-    } else {
-        false
-    }
+fn has_component_comment_for_any(comments: &SingleThreadedComments, spans: &[Span]) -> bool {
+    spans.iter().any(|span| {
+        !span.is_dummy()
+            && comments
+                .get_leading(span.lo())
+                .map(|items| items.iter().any(|c| c.text.contains("@component")))
+                .unwrap_or(false)
+    })
 }
 
 fn has_relyzer_directive(body: &BlockStmt) -> bool {
@@ -124,6 +128,14 @@ fn expr_name(expr: &Expr) -> String {
     match expr {
         Expr::Ident(id) => id.sym.to_string(),
         _ => format!("span:{:?}", expr.span()),
+    }
+}
+
+fn props_observed_name_from_pat(first: Option<&Pat>) -> Option<String> {
+    match first {
+        Some(Pat::Ident(id)) => Some(id.id.sym.to_string()),
+        Some(Pat::Object(_)) | None => Some("props".to_string()),
+        _ => None,
     }
 }
 
@@ -176,6 +188,16 @@ impl ComponentCollector {
                     observed_type: observed_type.to_string(),
                 });
             }
+        }
+    }
+
+    fn push_props_observed(&mut self, name: String) {
+        if !self.observed.iter().any(|item| item.loc == VIRTUAL_LOC_PROPS) {
+            self.observed.push(ObservedMeta {
+                name,
+                loc: VIRTUAL_LOC_PROPS.to_string(),
+                observed_type: "props".to_string(),
+            });
         }
     }
 }
@@ -250,22 +272,33 @@ struct Analyzer {
 }
 
 impl Analyzer {
-    fn push_component(&mut self, name: Option<String>, span: Span, body: Option<&BlockStmt>, auto_detected: bool) {
-        let explicit = has_component_comment(&self.comments, span)
+    fn push_component(
+        &mut self,
+        name: Option<String>,
+        span: Span,
+        body: Option<&BlockStmt>,
+        props_name: Option<String>,
+        comment_spans: Vec<Span>,
+        is_auto_detected: bool,
+    ) {
+        let explicit = has_component_comment_for_any(&self.comments, &comment_spans)
             || body.map(has_relyzer_directive).unwrap_or(false);
         let inferred = name.as_ref().map(|n| is_first_cap(n)).unwrap_or(false);
-        let is_component = explicit || (auto_detected && inferred);
+        let is_auto_component = is_auto_detected && inferred;
+        let is_component = explicit || is_auto_component;
 
         if !is_component {
             return;
         }
 
-        let mut observed_list = vec![];
+        let mut collector = ComponentCollector::new(self.cm.clone(), span);
+
+        if let Some(props_name) = props_name {
+            collector.push_props_observed(props_name);
+        }
 
         if let Some(block) = body {
-            let mut collector = ComponentCollector::new(self.cm.clone(), span);
             collector.visit_block_stmt(block);
-            observed_list = collector.observed;
         }
 
         self.components.push(ComponentMetaData {
@@ -273,13 +306,30 @@ impl Analyzer {
             name,
             code: extract_code(&self.cm, span),
             loc: span_to_loc(&self.cm, span),
-            observed_list,
-            should_detect_call_stack: auto_detected,
+            observed_list: collector.observed,
+            should_detect_call_stack: is_auto_component,
         });
     }
 }
 
 impl Visit for Analyzer {
+    fn visit_module_decl(&mut self, n: &ModuleDecl) {
+        if let ModuleDecl::ExportDecl(export_decl) = n {
+            if let Decl::Fn(fn_decl) = &export_decl.decl {
+                let name = fn_name_from_decl(fn_decl);
+                self.push_component(
+                    name.clone(),
+                    fn_decl.function.span,
+                    fn_decl.function.body.as_ref(),
+                    props_observed_name_from_pat(fn_decl.function.params.first().map(|p| &p.pat)),
+                    vec![export_decl.span, fn_decl.ident.span, fn_decl.function.span],
+                    name.as_ref().map(|n| is_first_cap(n)).unwrap_or(false),
+                );
+            }
+        }
+        n.visit_children_with(self);
+    }
+
     fn visit_import_decl(&mut self, n: &ImportDecl) {
         let specifiers = n
             .specifiers
@@ -298,34 +348,83 @@ impl Visit for Analyzer {
     }
 
     fn visit_fn_decl(&mut self, n: &FnDecl) {
-        self.push_component(fn_name_from_decl(n), n.function.span, n.function.body.as_ref(), true);
+        let name = fn_name_from_decl(n);
+        self.push_component(
+            name.clone(),
+            n.function.span,
+            n.function.body.as_ref(),
+            props_observed_name_from_pat(n.function.params.first().map(|p| &p.pat)),
+            vec![n.ident.span, n.function.span],
+            name.as_ref().map(|n| is_first_cap(n)).unwrap_or(false),
+        );
         n.visit_children_with(self);
     }
 
     fn visit_var_declarator(&mut self, n: &VarDeclarator) {
         let name = fn_name_from_var_declarator(n);
+        let mut base_comment_spans = vec![n.name.span(), n.span];
+
         if let Some(init) = &n.init {
             match &**init {
                 Expr::Fn(fn_expr) => {
-                    self.push_component(name.clone(), fn_expr.function.span, fn_expr.function.body.as_ref(), true);
+                    let mut comment_spans = base_comment_spans.clone();
+                    comment_spans.push(fn_expr.function.span);
+                    self.push_component(
+                        name.clone(),
+                        fn_expr.function.span,
+                        fn_expr.function.body.as_ref(),
+                        props_observed_name_from_pat(fn_expr.function.params.first().map(|p| &p.pat)),
+                        comment_spans,
+                        name.as_ref().map(|n| is_first_cap(n)).unwrap_or(false),
+                    );
                 }
                 Expr::Arrow(arrow) => {
                     let body = match &*arrow.body {
                         BlockStmtOrExpr::BlockStmt(block) => Some(block),
                         BlockStmtOrExpr::Expr(_) => None,
                     };
-                    self.push_component(name.clone(), arrow.span, body, true);
+                    let mut comment_spans = base_comment_spans.clone();
+                    comment_spans.push(arrow.span);
+                    self.push_component(
+                        name.clone(),
+                        arrow.span,
+                        body,
+                        props_observed_name_from_pat(arrow.params.first()),
+                        comment_spans,
+                        name.as_ref().map(|n| is_first_cap(n)).unwrap_or(false),
+                    );
                 }
                 Expr::Call(call) => {
+                    base_comment_spans.push(call.span);
                     if let Some(first) = call.args.first() {
                         match &*first.expr {
-                            Expr::Fn(fn_expr) => self.push_component(name.clone(), fn_expr.function.span, fn_expr.function.body.as_ref(), true),
+                            Expr::Fn(fn_expr) => {
+                                let mut comment_spans = base_comment_spans.clone();
+                                comment_spans.push(fn_expr.function.span);
+                                self.push_component(
+                                    name.clone(),
+                                    fn_expr.function.span,
+                                    fn_expr.function.body.as_ref(),
+                                    props_observed_name_from_pat(fn_expr.function.params.first().map(|p| &p.pat)),
+                                    comment_spans,
+                                    name.as_ref().map(|n| is_first_cap(n)).unwrap_or(false),
+                                )
+                            }
                             Expr::Arrow(arrow) => {
                                 let body = match &*arrow.body {
                                     BlockStmtOrExpr::BlockStmt(block) => Some(block),
                                     BlockStmtOrExpr::Expr(_) => None,
                                 };
-                                self.push_component(name.clone(), arrow.span, body, true);
+                                let mut comment_spans = base_comment_spans.clone();
+                                comment_spans.push(arrow.span);
+                                self.push_component(
+                                    name.clone(),
+                                    arrow.span,
+                                    body,
+                                    props_observed_name_from_pat(arrow.params.first()),
+                                    comment_spans,
+                                    name.as_ref().map(|n| is_first_cap(n)).unwrap_or(false),
+                                );
                             }
                             _ => {}
                         }
