@@ -1,0 +1,32 @@
+{
+  "name": "@relyzer/swc",
+  "version": "1.0.0-alpha.5",
+  "description": "swc-based analyzer for relyzer",
+  "author": "meowtec <bertonzh@gmail.com>",
+  "homepage": "https://github.com/meowtec/relyzer",
+  "license": "MIT",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "Cargo.toml",
+    "src",
+    "rust-src"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "prepublishOnly": "npm run build",
+    "build": "rm -rf dist && tsc --project tsconfig-build.json && cargo build --target wasm32-unknown-unknown --release --manifest-path Cargo.toml",
+    "watch": "tsc --project tsconfig-build.json -w",
+    "lint": "tsc --noEmit --project tsconfig-build.json",
+    "build:wasm": "cargo build --target wasm32-unknown-unknown --release --manifest-path Cargo.toml"
+  },
+  "dependencies": {
+    "@relyzer/shared": "^1.0.0-alpha.5"
+  },
+  "devDependencies": {
+    "typescript": "^4.1.3"
+  }
+}

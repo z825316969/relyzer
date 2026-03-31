@@ -35,6 +35,6 @@ ReactDOM.render(
   document.querySelector('#root'),
 );
 
-if ((import.meta as any).hot) {
-  (import.meta as any).hot.accept();
+if ((module as any).hot) {
+  (module as any).hot.accept();
 }

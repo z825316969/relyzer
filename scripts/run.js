@@ -19,6 +19,7 @@ const BUILTIN_COMMANDS = [
   'babel',
   'client',
   'runtime',
+  'swc',
 ].forEach((subPkgName) => {
   shell.cd(path.join(__dirname, '../packages', subPkgName));
   const run = BUILTIN_COMMANDS.includes(command) ? '' : 'run';
