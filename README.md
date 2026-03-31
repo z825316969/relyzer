@@ -106,3 +106,58 @@ Make sure you have installed the latest **React Devtool** in Chrome or Firefox.
 1. Start the dev server and open browser page
 2. Open React Devtool
 3. Select component in the components tree viewer
+
+## SWC analyzer (experimental)
+
+`@relyzer/swc` is an experimental Rust + SWC powered analyzer package for Relyzer.
+
+### What it does today
+
+- parses TS / TSX with SWC
+- collects import metadata
+- detects component-like functions
+- extracts a first batch of observed metadata:
+  - `var`
+  - `dep`
+  - `attr`
+
+Current scope is **read-only analysis**. It does **not** yet replace the Babel plugin's runtime hook injection behavior.
+
+### Build the SWC package
+
+```bash
+pnpm --filter @relyzer/swc run build
+```
+
+### Use the SWC analyzer
+
+```ts
+import { analyzeWithSwc } from '@relyzer/swc';
+
+const result = await analyzeWithSwc(`
+  import React, { useMemo } from 'react';
+
+  /** @component */
+  export function Demo({ count, title }) {
+    const value = useMemo(() => count * 2, [count]);
+    const info = { value };
+
+    return <Widget label={title} data={info} />;
+  }
+`);
+
+console.log(result.components);
+```
+
+### Migration guide
+
+If you are already using `@relyzer/babel`:
+
+- keep `@relyzer/babel` for development-time runtime instrumentation
+- use `@relyzer/swc` for faster static metadata extraction
+- gradually port analysis logic from Babel into SWC
+
+Recommended split for now:
+
+- `@relyzer/babel` → transform / inject runtime hooks
+- `@relyzer/swc` → static analysis / metadata collection
