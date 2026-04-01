@@ -9,19 +9,23 @@
   "types": "dist/index.d.ts",
   "files": [
     "dist",
+    "plugin",
     "Cargo.toml",
     "src",
-    "rust-src"
+    "rust-src",
+    ".swcrc.example.json"
   ],
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
     "prepublishOnly": "npm run build",
-    "build": "rm -rf dist && tsc --project tsconfig-build.json && cargo build --target wasm32-unknown-unknown --release --manifest-path Cargo.toml && wasm-bindgen target/wasm32-unknown-unknown/release/relyzer_swc.wasm --out-dir dist/wasm --target nodejs",
+    "build": "rm -rf dist plugin && tsc --project tsconfig-build.json && pnpm run build:api && pnpm run build:plugin",
     "watch": "tsc --project tsconfig-build.json -w",
     "lint": "tsc --noEmit --project tsconfig-build.json",
-    "build:wasm": "cargo build --target wasm32-unknown-unknown --release --manifest-path Cargo.toml && wasm-bindgen target/wasm32-unknown-unknown/release/relyzer_swc.wasm --out-dir dist/wasm --target nodejs",
+    "build:api": "cargo build --target wasm32-unknown-unknown --release --manifest-path Cargo.toml && wasm-bindgen target/wasm32-unknown-unknown/release/relyzer_swc.wasm --out-dir dist/wasm --target nodejs",
+    "build:plugin": "mkdir -p plugin && cargo build --target wasm32-wasi --release --manifest-path Cargo.toml && cp target/wasm32-wasi/release/relyzer_swc.wasm plugin/relyzer_swc.wasm",
+    "build:wasm": "pnpm run build:api",
     "compare": "ts-node --transpile-only src/compare.ts"
   },
   "dependencies": {

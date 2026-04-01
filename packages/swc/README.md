@@ -81,6 +81,19 @@ The compare script:
 - checks **strict JSON equality**
 - includes both inline edge cases and real fixture files under `packages/swc/fixtures/compare`
 
+## SWC Wasm Plugin scaffold
+
+Phase 2 has started with a Rust-side scaffold for a standard SWC Wasm plugin:
+
+- shared `analyzer` / `plan` / `transform` / `runtime_ast` module split
+- reserved plugin entry in `rust-src/plugin.rs`
+- dual build targets:
+  - Node API (`build:api`)
+  - SWC plugin wasm (`build:plugin`)
+- example config: `packages/swc/.swcrc.example.json`
+
+Current status: the plugin architecture scaffold is in place, but the full Babel-equivalent AST injection path is still under active implementation.
+
 ## Output shape
 
 The SWC analyzer aligns with the Babel analyzer's metadata model:
