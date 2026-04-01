@@ -21,7 +21,8 @@
     "build": "rm -rf dist && tsc --project tsconfig-build.json && cargo build --target wasm32-unknown-unknown --release --manifest-path Cargo.toml && wasm-bindgen target/wasm32-unknown-unknown/release/relyzer_swc.wasm --out-dir dist/wasm --target nodejs",
     "watch": "tsc --project tsconfig-build.json -w",
     "lint": "tsc --noEmit --project tsconfig-build.json",
-    "build:wasm": "cargo build --target wasm32-unknown-unknown --release --manifest-path Cargo.toml && wasm-bindgen target/wasm32-unknown-unknown/release/relyzer_swc.wasm --out-dir dist/wasm --target nodejs"
+    "build:wasm": "cargo build --target wasm32-unknown-unknown --release --manifest-path Cargo.toml && wasm-bindgen target/wasm32-unknown-unknown/release/relyzer_swc.wasm --out-dir dist/wasm --target nodejs",
+    "compare": "ts-node --transpile-only src/compare.ts"
   },
   "dependencies": {
     "@relyzer/shared": "^1.0.0-alpha.5"

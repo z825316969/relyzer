@@ -5,7 +5,6 @@ use swc_ecma_parser::{lexer::Lexer, Parser, StringInput, Syntax, TsConfig};
 use swc_ecma_visit::{Visit, VisitWith};
 use wasm_bindgen::prelude::*;
 
-const VIRTUAL_LOC_PROPS: &str = "-1";
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -103,6 +102,14 @@ fn has_component_comment_for_any(comments: &SingleThreadedComments, spans: &[Spa
     })
 }
 
+fn jsx_attr_name_span(name: &JSXAttrName) -> Span {
+    match name {
+        JSXAttrName::Ident(id) => id.span,
+        JSXAttrName::JSXNamespacedName(ns) => Span::new(ns.ns.span.lo, ns.name.span.hi, Default::default()),
+    }
+}
+
+
 fn has_relyzer_directive(body: &BlockStmt) -> bool {
     body.stmts.iter().any(|stmt| match stmt {
         Stmt::Expr(expr) => match &*expr.expr {
@@ -191,15 +198,6 @@ impl ComponentCollector {
         }
     }
 
-    fn push_props_observed(&mut self, name: String) {
-        if !self.observed.iter().any(|item| item.loc == VIRTUAL_LOC_PROPS) {
-            self.observed.push(ObservedMeta {
-                name,
-                loc: VIRTUAL_LOC_PROPS.to_string(),
-                observed_type: "props".to_string(),
-            });
-        }
-    }
 }
 
 impl Visit for ComponentCollector {
@@ -247,8 +245,8 @@ impl Visit for ComponentCollector {
                         match value {
                             JSXAttrValue::Lit(Lit::Str(_)) => {}
                             JSXAttrValue::JSXExprContainer(container) => {
-                                if let JSXExpr::Expr(expr) = &container.expr {
-                                    self.push_observed("attr", attr_name, expr.span());
+                                if let JSXExpr::Expr(_expr) = &container.expr {
+                                    self.push_observed("attr", attr_name, jsx_attr_name_span(&attr.name));
                                 }
                             }
                             JSXAttrValue::JSXElement(el) => self.push_observed("attr", attr_name, el.span),
@@ -293,19 +291,29 @@ impl Analyzer {
 
         let mut collector = ComponentCollector::new(self.cm.clone(), span);
 
-        if let Some(props_name) = props_name {
-            collector.push_props_observed(props_name);
-        }
+        let _ = props_name;
 
         if let Some(block) = body {
             collector.visit_block_stmt(block);
         }
 
+        let code = extract_code(&self.cm, span);
+        let loc = span_to_loc(&self.cm, span);
+        let normalized_name = if is_auto_component { name } else { None };
+
+        if self.components.iter().any(|item| {
+            item.code == code
+                && item.loc == loc
+                && item.should_detect_call_stack == is_auto_component
+        }) {
+            return;
+        }
+
         self.components.push(ComponentMetaData {
             id: random_id(),
-            name,
-            code: extract_code(&self.cm, span),
-            loc: span_to_loc(&self.cm, span),
+            name: normalized_name,
+            code,
+            loc,
             observed_list: collector.observed,
             should_detect_call_stack: is_auto_component,
         });
@@ -316,15 +324,21 @@ impl Visit for Analyzer {
     fn visit_module_decl(&mut self, n: &ModuleDecl) {
         if let ModuleDecl::ExportDecl(export_decl) = n {
             if let Decl::Fn(fn_decl) = &export_decl.decl {
-                let name = fn_name_from_decl(fn_decl);
-                self.push_component(
-                    name.clone(),
-                    fn_decl.function.span,
-                    fn_decl.function.body.as_ref(),
-                    props_observed_name_from_pat(fn_decl.function.params.first().map(|p| &p.pat)),
-                    vec![export_decl.span, fn_decl.ident.span, fn_decl.function.span],
-                    name.as_ref().map(|n| is_first_cap(n)).unwrap_or(false),
-                );
+                let explicit = has_component_comment_for_any(
+                    &self.comments,
+                    &[export_decl.span, fn_decl.ident.span, fn_decl.function.span],
+                ) || fn_decl.function.body.as_ref().map(has_relyzer_directive).unwrap_or(false);
+
+                if explicit {
+                    self.push_component(
+                        None,
+                        fn_decl.function.span,
+                        fn_decl.function.body.as_ref(),
+                        props_observed_name_from_pat(fn_decl.function.params.first().map(|p| &p.pat)),
+                        vec![export_decl.span, fn_decl.ident.span, fn_decl.function.span],
+                        false,
+                    );
+                }
             }
         }
         n.visit_children_with(self);
