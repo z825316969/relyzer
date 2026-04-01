@@ -1,4 +1,6 @@
 /* eslint-disable no-console */
+import fs from 'fs';
+import path from 'path';
 import { transformSync } from '../../babel/node_modules/@babel/core';
 import syntaxJsx from '../../babel/node_modules/@babel/plugin-syntax-jsx';
 import relyzerBabelPluginModule from '../../babel/lib/index';
@@ -37,7 +39,7 @@ function astObjectToValue(node: any): any {
   }
 }
 
-const cases: Record<string, string> = {
+const inlineCases: Record<string, string> = {
   identifierProps: `
     import React from 'react';
     export function Card(props) {
@@ -144,6 +146,23 @@ function normalizeResult(result: SwcAnalyzeResult): NormalizedResult {
   };
 }
 
+function collectFixtureCases(): Record<string, string> {
+  const fixtureDir = path.resolve(__dirname, '../fixtures/compare');
+  if (!fs.existsSync(fixtureDir)) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    fs.readdirSync(fixtureDir)
+      .filter((file) => file.endsWith('.tsx') || file.endsWith('.ts') || file.endsWith('.jsx') || file.endsWith('.js'))
+      .sort()
+      .map((file) => [
+        `fixture:${file}`,
+        fs.readFileSync(path.join(fixtureDir, file), 'utf8'),
+      ]),
+  );
+}
+
 function extractBabelResult(code: string, filename: string): SwcAnalyzeResult {
   const result = transformSync(code, {
     filename,
@@ -208,6 +227,10 @@ function extractBabelResult(code: string, filename: string): SwcAnalyzeResult {
 
 async function main() {
   let hasDiff = false;
+  const cases = {
+    ...inlineCases,
+    ...collectFixtureCases(),
+  };
 
   for (const [name, code] of Object.entries(cases)) {
     const babelResult = normalizeResult(extractBabelResult(code, `${name}.jsx`));
