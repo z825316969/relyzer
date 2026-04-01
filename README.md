@@ -116,25 +116,30 @@ Make sure you have installed the latest **React Devtool** in Chrome or Firefox.
 - parses TS / TSX with SWC
 - collects import metadata
 - detects component-like functions
-- extracts a first batch of observed metadata:
+- extracts observed metadata:
   - `var`
   - `dep`
   - `attr`
 
-Current scope is **read-only analysis**. It does **not** yet replace the Babel plugin's runtime hook injection behavior.
+Current scope is **read-only analysis**. It does **not** replace the Babel plugin's runtime hook injection behavior.
 
-### Build the SWC package
+### Install package
 
 ```bash
-pnpm --filter @relyzer/swc run build
+npm i @relyzer/swc -D
 ```
 
 ### Use the SWC analyzer
 
+Unlike `@relyzer/babel`, the SWC package does **not** transform your component code.
+It analyzes source code and returns metadata.
+
+Use `@component` or `'use relyzer'` for explicit marking, or rely on the same uppercase component auto-detection behavior used by Babel.
+
 ```ts
 import { analyzeWithSwc } from '@relyzer/swc';
 
-const result = await analyzeWithSwc(`
+const code = `
   import React, { useMemo } from 'react';
 
   /** @component */
@@ -144,10 +149,40 @@ const result = await analyzeWithSwc(`
 
     return <Widget label={title} data={info} />;
   }
-`);
+`;
 
+const result = await analyzeWithSwc(code);
+
+console.log(result.imports);
 console.log(result.components);
 ```
+
+The returned metadata contains:
+
+- `imports`
+- `components`
+- `errors`
+
+Each component entry includes:
+
+- `code`
+- `loc`
+- `observedList`
+- `shouldDetectCallStack`
+
+### Build the SWC package
+
+```bash
+pnpm --filter @relyzer/swc run build
+```
+
+### Verify Babel vs SWC parity
+
+```bash
+pnpm --filter @relyzer/swc run compare
+```
+
+This compare script runs the same fixtures through Babel and SWC, then checks strict JSON equality after normalization.
 
 ### Migration guide
 
